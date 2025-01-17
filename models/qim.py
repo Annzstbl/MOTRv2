@@ -8,6 +8,7 @@ from torch import nn
 
 from util import box_ops
 from models.structures import Boxes, Instances, pairwise_iou
+from models.deformable_transformer_plus import pos2posemb
 
 
 def random_drop_tracks(track_instances: Instances, drop_probability: float) -> Instances:
@@ -150,7 +151,7 @@ class QueryInteractionModulev2(QueryInteractionBase):
 
         out_embed = track_instances.output_embedding
         query_feat = track_instances.query_pos
-        query_pos = pos2posemb(track_instances.ref_pts)
+        query_pos = pos2posemb(track_instances.ref_pts, dst_dim=out_embed.shape[-1])
         q = k = query_pos + out_embed
 
         tgt = out_embed
@@ -181,14 +182,14 @@ class QueryInteractionModulev2(QueryInteractionBase):
         return active_track_instances
 
 
-def pos2posemb(pos, num_pos_feats=64, temperature=10000):
-    scale = 2 * math.pi
-    pos = pos * scale
-    dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=pos.device)
-    dim_t = temperature ** (2 * (dim_t // 2) / num_pos_feats)
-    posemb = pos[..., None] / dim_t
-    posemb = torch.stack((posemb[..., 0::2].sin(), posemb[..., 1::2].cos()), dim=-1).flatten(-3)
-    return posemb
+# def pos2posemb(pos, num_pos_feats=64, temperature=10000):
+#     scale = 2 * math.pi
+#     pos = pos * scale
+#     dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=pos.device)
+#     dim_t = temperature ** (2 * (dim_t // 2) / num_pos_feats)
+#     posemb = pos[..., None] / dim_t
+#     posemb = torch.stack((posemb[..., 0::2].sin(), posemb[..., 1::2].cos()), dim=-1).flatten(-3)
+#     return posemb
 
 
 def build(args, layer_name, dim_in, hidden_dim, dim_out):

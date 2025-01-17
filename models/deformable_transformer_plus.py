@@ -389,13 +389,20 @@ class DeformableTransformerDecoderLayer(nn.Module):
                                         src_padding_mask, attn_mask)
 
 
-def pos2posemb(pos, num_pos_feats=64, temperature=10000):
+def pos2posemb(pos, num_pos_feats=64, temperature=10000, dst_dim=None):
+    if dst_dim:
+        num_pos_feats = dst_dim//pos.shape[-1]
+        num_pos_feats = num_pos_feats if num_pos_feats%2==0 else num_pos_feats-1
     scale = 2 * math.pi
     pos = pos * scale
     dim_t = torch.arange(num_pos_feats, dtype=torch.float32, device=pos.device)
     dim_t = temperature ** (2 * (dim_t // 2) / num_pos_feats)
     posemb = pos[..., None] / dim_t
     posemb = torch.stack((posemb[..., 0::2].sin(), posemb[..., 1::2].cos()), dim=-1).flatten(-3)
+    if dst_dim:
+        assert posemb.shape[-1] < dst_dim
+        posemb_shape = posemb.shape
+        posemb = torch.cat((posemb, torch.zeros(*posemb_shape[:-1], dst_dim-posemb_shape[-1],device=posemb.device)), dim=-1)
     return posemb
 
 
@@ -419,17 +426,22 @@ class DeformableTransformerDecoder(nn.Module):
             if reference_points.shape[-1] == 4:
                 reference_points_input = reference_points[:, :, None] \
                                          * torch.cat([src_valid_ratios, src_valid_ratios], -1)[:, None]
+            elif reference_points.shape[-1] == 5:# 带一个角度
+                reference_points_input = reference_points[:, :, :4]
+                reference_points_input = reference_points_input[:, :, None] \
+                                         * torch.cat([src_valid_ratios, src_valid_ratios], -1)[:, None]
             else:
                 assert reference_points.shape[-1] == 2
                 reference_points_input = reference_points[:, :, None] * src_valid_ratios[:, None]
-            query_pos = pos2posemb(reference_points)
+           
+            query_pos = pos2posemb(reference_points, dst_dim=output.shape[-1])
             output = layer(output, query_pos, reference_points_input, src, src_spatial_shapes,
                            src_level_start_index, src_padding_mask, mem_bank, mem_bank_pad_mask, attn_mask)
 
             # hack implementation for iterative bounding box refinement
             if self.bbox_embed is not None:
                 tmp = self.bbox_embed[lid](output)
-                if reference_points.shape[-1] == 4:
+                if reference_points.shape[-1] == 4 or reference_points.shape[-1]==5:
                     new_reference_points = tmp + inverse_sigmoid(reference_points)
                     new_reference_points = new_reference_points.sigmoid()
                 else:

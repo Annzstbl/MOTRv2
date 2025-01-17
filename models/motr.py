@@ -31,6 +31,10 @@ from .matcher import build_matcher
 from .deformable_transformer_plus import build_deforamble_transformer, pos2posemb
 from .qim import build as build_query_interaction_layer
 from .deformable_detr import SetCriterion, MLP, sigmoid_focal_loss
+from hsmot.loss.loss import l1_loss_rotate, loss_rotated_iou_norm_bboxes1
+from hsmot.util.dist import box_iou_rotated_norm_bboxes1
+from mmrotate.core.bbox.transforms import obb2poly
+from hsmot.datasets.pipelines.channel import rotate_norm_boxes_to_boxes
 
 
 class ClipMatcher(SetCriterion):
@@ -102,7 +106,7 @@ class ClipMatcher(SetCriterion):
         assert loss in loss_map, f'do you really want to compute {loss} loss?'
         return loss_map[loss](outputs, gt_instances, indices, num_boxes, **kwargs)
 
-    def loss_boxes(self, outputs, gt_instances: List[Instances], indices: List[tuple], num_boxes):
+    def loss_boxes(self, outputs, gt_instances: List[Instances], indices: List[tuple], num_boxes, img_metas=None):
         """Compute the losses related to the bounding boxes, the L1 regression loss and the GIoU loss
            targets dicts must contain the key "boxes" containing a tensor of dim [nb_target_boxes, 4]
            The target boxes are expected in format (center_x, center_y, h, w), normalized by the image size.
@@ -117,15 +121,21 @@ class ClipMatcher(SetCriterion):
         idx = self._get_src_permutation_idx(indices)
         src_boxes = outputs['pred_boxes'][idx]
         target_boxes = torch.cat([gt_per_img.boxes[i] for gt_per_img, (_, i) in zip(gt_instances, indices)], dim=0)
+        norm_target_boxes = torch.cat([gt_per_img.norm_boxes[i] for gt_per_img, (_, i) in zip(gt_instances, indices)], dim=0)
 
         # for pad target, don't calculate regression loss, judged by whether obj_id=-1
         target_obj_ids = torch.cat([gt_per_img.obj_ids[i] for gt_per_img, (_, i) in zip(gt_instances, indices)], dim=0) # size(16)
         mask = (target_obj_ids != -1)
 
-        loss_bbox = F.l1_loss(src_boxes[mask], target_boxes[mask], reduction='none')
-        loss_giou = 1 - torch.diag(box_ops.generalized_box_iou(
-            box_ops.box_cxcywh_to_xyxy(src_boxes[mask]),
-            box_ops.box_cxcywh_to_xyxy(target_boxes[mask])))
+        # loss_bbox = F.l1_loss(src_boxes[mask], target_boxes[mask], reduction='none')
+        loss_bbox = l1_loss_rotate(src_boxes[mask], norm_target_boxes[mask])
+        # loss_giou = 1 - torch.diag(box_ops.generalized_box_iou(
+        #     box_ops.box_cxcywh_to_xyxy(src_boxes[mask]),
+        #     box_ops.box_cxcywh_to_xyxy(target_boxes[mask])))
+        if len(src_boxes[mask]) == 0 or len(target_boxes[mask]) == 0:
+            loss_giou = torch.zeros_like(loss_bbox)
+        else:
+            loss_giou = 1-loss_rotated_iou_norm_bboxes1(src_boxes[mask], target_boxes[mask], img_metas['img_shape'], img_metas['version'],)
 
         losses = {}
         losses['loss_bbox'] = loss_bbox.sum() / num_boxes
@@ -133,7 +143,7 @@ class ClipMatcher(SetCriterion):
 
         return losses
 
-    def loss_labels(self, outputs, gt_instances: List[Instances], indices, num_boxes, log=False):
+    def loss_labels(self, outputs, gt_instances: List[Instances], indices, num_boxes, log=False, img_metas=None):
         """Classification loss (NLL)
         targets dicts must contain the key "labels" containing a tensor of dim [nb_target_boxes]
         """
@@ -144,7 +154,7 @@ class ClipMatcher(SetCriterion):
         # The matched gt for disappear track query is set -1.
         labels = []
         for gt_per_img, (_, J) in zip(gt_instances, indices):
-            labels_per_img = torch.ones_like(J)
+            labels_per_img = torch.ones_like(J) * self.num_classes
             # set labels of track-appear slots to 0.
             if len(gt_per_img) > 0:
                 labels_per_img[J != -1] = gt_per_img.labels[J[J != -1]]
@@ -170,7 +180,11 @@ class ClipMatcher(SetCriterion):
 
         return losses
 
-    def match_for_single_frame(self, outputs: dict):
+    def match_for_single_frame(self, outputs: dict, img_metas = None):
+        # if img_metas is list, take the first one.
+        if isinstance(img_metas, list):
+            img_metas = img_metas[0]
+
         outputs_without_aux = {k: v for k, v in outputs.items() if k != 'aux_outputs'}
 
         gt_instances_i = self.gt_instances[self._current_frame_idx]  # gt instances of i-th image.
@@ -209,9 +223,9 @@ class ClipMatcher(SetCriterion):
         # untracked_tgt_indexes = select_unmatched_indexes(tgt_indexes, len(gt_instances_i))
         untracked_gt_instances = gt_instances_i[untracked_tgt_indexes]
 
-        def match_for_single_decoder_layer(unmatched_outputs, matcher):
+        def match_for_single_decoder_layer(unmatched_outputs, matcher, img_metas=img_metas):
             new_track_indices = matcher(unmatched_outputs,
-                                             [untracked_gt_instances])  # list[tuple(src_idx, tgt_idx)]
+                                             [untracked_gt_instances], img_metas=img_metas)  # list[tuple(src_idx, tgt_idx)]
 
             src_idx = new_track_indices[0][0]
             tgt_idx = new_track_indices[0][1]
@@ -225,7 +239,7 @@ class ClipMatcher(SetCriterion):
             'pred_logits': track_instances.pred_logits[unmatched_track_idxes].unsqueeze(0),
             'pred_boxes': track_instances.pred_boxes[unmatched_track_idxes].unsqueeze(0),
         }
-        new_matched_indices = match_for_single_decoder_layer(unmatched_outputs, self.matcher)
+        new_matched_indices = match_for_single_decoder_layer(unmatched_outputs, self.matcher, img_metas=img_metas)
 
         # step5. update obj_idxes according to the new matching result.
         track_instances.obj_idxes[new_matched_indices[:, 0]] = gt_instances_i.obj_ids[new_matched_indices[:, 1]].long()
@@ -236,9 +250,8 @@ class ClipMatcher(SetCriterion):
         active_track_boxes = track_instances.pred_boxes[active_idxes]
         if len(active_track_boxes) > 0:
             gt_boxes = gt_instances_i.boxes[track_instances.matched_gt_idxes[active_idxes]]
-            active_track_boxes = box_ops.box_cxcywh_to_xyxy(active_track_boxes)
-            gt_boxes = box_ops.box_cxcywh_to_xyxy(gt_boxes)
-            track_instances.iou[active_idxes] = matched_boxlist_iou(Boxes(active_track_boxes), Boxes(gt_boxes))
+ 
+            track_instances.iou[active_idxes] = box_iou_rotated_norm_bboxes1(active_track_boxes, gt_boxes, img_shape=img_metas['img_shape'], version=img_metas['version'], aligned=True)
 
         # step7. merge the unmatched pairs and the matched pairs.
         matched_indices = torch.cat([new_matched_indices, prev_matched_indices], dim=0)
@@ -251,7 +264,8 @@ class ClipMatcher(SetCriterion):
                                            outputs=outputs_i,
                                            gt_instances=[gt_instances_i],
                                            indices=[(matched_indices[:, 0], matched_indices[:, 1])],
-                                           num_boxes=1)
+                                           num_boxes=1,
+                                           img_metas=img_metas)
             self.losses_dict.update(
                 {'frame_{}_{}'.format(self._current_frame_idx, key): value for key, value in new_track_loss.items()})
 
@@ -271,7 +285,8 @@ class ClipMatcher(SetCriterion):
                                            aux_outputs,
                                            gt_instances=[gt_instances_i],
                                            indices=[(matched_indices_layer[:, 0], matched_indices_layer[:, 1])],
-                                           num_boxes=1, )
+                                           num_boxes=1, 
+                                           img_metas=img_metas)
                     self.losses_dict.update(
                         {'frame_{}_aux{}_{}'.format(self._current_frame_idx, i, key): value for key, value in
                          l_dict.items()})
@@ -283,7 +298,8 @@ class ClipMatcher(SetCriterion):
                                         aux_outputs,
                                         gt_instances=[gt_instances_i],
                                         indices=[(ar, ar)],
-                                        num_boxes=1, )
+                                        num_boxes=1, 
+                                        img_metas=img_metas)
                 self.losses_dict.update(
                     {'frame_{}_ps{}_{}'.format(self._current_frame_idx, i, key): value for key, value in
                         l_dict.items()})
@@ -327,8 +343,9 @@ class RuntimeTrackerBase(object):
 
 class TrackerPostProcess(nn.Module):
     """ This module converts the model's output into the format expected by the coco api"""
-    def __init__(self):
+    def __init__(self, version='le135'):
         super().__init__()
+        self.version = version
 
     @torch.no_grad()
     def forward(self, track_instances: Instances, target_size) -> Instances:
@@ -342,20 +359,22 @@ class TrackerPostProcess(nn.Module):
         out_logits = track_instances.pred_logits
         out_bbox = track_instances.pred_boxes
 
-        # prob = out_logits.sigmoid()
-        scores = out_logits[..., 0].sigmoid()
-        # scores, labels = prob.max(-1)
+        prob = out_logits.sigmoid()
+        # scores = out_logits[..., 0].sigmoid()
+        scores, labels = prob.max(dim=-1)
 
-        # convert to [x0, y0, x1, y1] format
-        boxes = box_ops.box_cxcywh_to_xyxy(out_bbox)
-        # and from relative [0, 1] to absolute [0, height] coordinates
         img_h, img_w = target_size
-        scale_fct = torch.Tensor([img_w, img_h, img_w, img_h]).to(boxes)
-        boxes = boxes * scale_fct[None, :]
+        out_bbox = rotate_norm_boxes_to_boxes(out_bbox, (img_h, img_w), self.version)
+        boxes = obb2poly(out_bbox)
+        # and from relative [0, 1] to absolute [0, height] coordinates
+        # img_h, img_w = target_size
+        # scale_fct = torch.Tensor([img_w, img_h, img_w, img_h]).to(boxes)
+        # boxes = boxes * scale_fct[None, :]
 
         track_instances.boxes = boxes
         track_instances.scores = scores
-        track_instances.labels = torch.full_like(scores, 0)
+        track_instances.labels = labels
+        # track_instances.labels = torch.full_like(scores, 0)
         # track_instances.remove('pred_logits')
         # track_instances.remove('pred_boxes')
         return track_instances
@@ -366,7 +385,7 @@ def _get_clones(module, N):
 
 
 class MOTR(nn.Module):
-    def __init__(self, backbone, transformer, num_classes, num_queries, num_feature_levels, criterion, track_embed,
+    def __init__(self, backbone, transformer, num_classes, num_queries, num_feature_levels, criterion, track_embed, rt_version='le135',
                  aux_loss=True, with_box_refine=False, two_stage=False, memory_bank=None, use_checkpoint=False, query_denoise=0):
         """ Initializes the model.
         Parameters:
@@ -386,11 +405,11 @@ class MOTR(nn.Module):
         hidden_dim = transformer.d_model
         self.num_classes = num_classes
         self.class_embed = nn.Linear(hidden_dim, num_classes)
-        self.bbox_embed = MLP(hidden_dim, hidden_dim, 4, 3)
+        self.bbox_embed = MLP(hidden_dim, hidden_dim, 5, 3)
         self.num_feature_levels = num_feature_levels
         self.use_checkpoint = use_checkpoint
         self.query_denoise = query_denoise
-        self.position = nn.Embedding(num_queries, 4)
+        self.position = nn.Embedding(num_queries, 5)
         self.yolox_embed = nn.Embedding(1, hidden_dim)
         self.query_embed = nn.Embedding(num_queries, hidden_dim)
         if query_denoise:
@@ -450,7 +469,8 @@ class MOTR(nn.Module):
             self.transformer.decoder.class_embed = self.class_embed
             for box_embed in self.bbox_embed:
                 nn.init.constant_(box_embed.layers[-1].bias.data[2:], 0.0)
-        self.post_process = TrackerPostProcess()
+        self.rt_version = rt_version
+        self.post_process = TrackerPostProcess(self.rt_version)
         self.track_base = RuntimeTrackerBase()
         self.criterion = criterion
         self.memory_bank = memory_bank
@@ -464,8 +484,8 @@ class MOTR(nn.Module):
             track_instances.ref_pts = self.position.weight
             track_instances.query_pos = self.query_embed.weight
         else:
-            track_instances.ref_pts = torch.cat([self.position.weight, proposals[:, :4]])
-            track_instances.query_pos = torch.cat([self.query_embed.weight, pos2posemb(proposals[:, 4:], d_model) + self.yolox_embed.weight])
+            track_instances.ref_pts = torch.cat([self.position.weight, proposals[:,:5]])
+            track_instances.query_pos = torch.cat([self.query_embed.weight, pos2posemb(proposals[:, 5:], d_model) + self.yolox_embed.weight])
         track_instances.output_embedding = torch.zeros((len(track_instances), d_model), device=device)
         track_instances.obj_idxes = torch.full((len(track_instances),), -1, dtype=torch.long, device=device)
         track_instances.matched_gt_idxes = torch.full((len(track_instances),), -1, dtype=torch.long, device=device)
@@ -473,7 +493,7 @@ class MOTR(nn.Module):
         track_instances.iou = torch.ones((len(track_instances),), dtype=torch.float, device=device)
         track_instances.scores = torch.zeros((len(track_instances),), dtype=torch.float, device=device)
         track_instances.track_scores = torch.zeros((len(track_instances),), dtype=torch.float, device=device)
-        track_instances.pred_boxes = torch.zeros((len(track_instances), 4), dtype=torch.float, device=device)
+        track_instances.pred_boxes = torch.zeros((len(track_instances), 5), dtype=torch.float, device=device)
         track_instances.pred_logits = torch.zeros((len(track_instances), self.num_classes), dtype=torch.float, device=device)
 
         mem_bank_len = self.mem_bank_len
@@ -549,6 +569,8 @@ class MOTR(nn.Module):
             tmp = self.bbox_embed[lvl](hs[lvl])
             if reference.shape[-1] == 4:
                 tmp += reference
+            elif reference.shape[-1] ==5:
+                tmp += reference
             else:
                 assert reference.shape[-1] == 2
                 tmp[..., :2] += reference
@@ -564,7 +586,7 @@ class MOTR(nn.Module):
         out['hs'] = hs[-1]
         return out
 
-    def _post_process_single_image(self, frame_res, track_instances, is_last):
+    def _post_process_single_image(self, frame_res, track_instances, is_last, img_metas=None):
         if self.query_denoise > 0:
             n_ins = len(track_instances)
             ps_logits = frame_res['pred_logits'][:, n_ins:]
@@ -586,7 +608,8 @@ class MOTR(nn.Module):
             if self.training:
                 track_scores = frame_res['pred_logits'][0, :].sigmoid().max(dim=-1).values
             else:
-                track_scores = frame_res['pred_logits'][0, :, 0].sigmoid()
+                track_scores = frame_res['pred_logits'][0, :].sigmoid().max(dim=-1).values
+                # track_scores = frame_res['pred_logits'][0, :, 0].sigmoid()
 
         track_instances.scores = track_scores
         track_instances.pred_logits = frame_res['pred_logits'][0]
@@ -595,7 +618,7 @@ class MOTR(nn.Module):
         if self.training:
             # the track id will be assigned by the mather.
             frame_res['track_instances'] = track_instances
-            track_instances = self.criterion.match_for_single_frame(frame_res)
+            track_instances = self.criterion.match_for_single_frame(frame_res, img_metas=img_metas)
         else:
             # each track will be assigned an unique global id by the track base.
             self.track_base.update(track_instances)
@@ -639,21 +662,24 @@ class MOTR(nn.Module):
         if self.training:
             self.criterion.initialize_for_single_clip(data['gt_instances'])
         frames = data['imgs']  # list of Tensor.
+        img_metas = data['img_metas']
         outputs = {
             'pred_logits': [],
             'pred_boxes': [],
         }
         track_instances = None
         keys = list(self._generate_empty_tracks()._fields.keys())
-        for frame_index, (frame, gt, proposals) in enumerate(zip(frames, data['gt_instances'], data['proposals'])):
+        for frame_index, (frame, gt, proposals_instances) in enumerate(zip(frames, data['gt_instances'], data['proposals_instances'])):
             frame.requires_grad = False
             is_last = frame_index == len(frames) - 1
 
+            proposals = torch.cat((proposals_instances.norm_proposals, proposals_instances.proposal_scores[:,None],), dim = 1) # proposals [N, 4],  proposal_socres[N]
+
             if self.query_denoise > 0:
                 l_1 = l_2 = self.query_denoise
-                gtboxes = gt.boxes.clone()
+                gtboxes = gt.norm_boxes.clone()
                 _rs = torch.rand_like(gtboxes) * 2 - 1
-                gtboxes[..., :2] += gtboxes[..., 2:] * _rs[..., :2] * l_1
+                gtboxes[..., :2] += gtboxes[..., 2:4] * _rs[..., :2] * l_1#根据宽高对中心点偏移
                 gtboxes[..., 2:] *= 1 + l_2 * _rs[..., 2:]
             else:
                 gtboxes = None
@@ -693,7 +719,7 @@ class MOTR(nn.Module):
             else:
                 frame = nested_tensor_from_tensor_list([frame])
                 frame_res = self._forward_single_image(frame, track_instances, gtboxes)
-            frame_res = self._post_process_single_image(frame_res, track_instances, is_last)
+            frame_res = self._post_process_single_image(frame_res, track_instances, is_last, img_metas=img_metas)
 
             track_instances = frame_res['track_instances']
             outputs['pred_logits'].append(frame_res['pred_logits'])
@@ -714,6 +740,7 @@ def build(args):
         'e2e_dance': 1,
         'e2e_joint': 1,
         'e2e_static_mot': 1,
+        'e2e_hsmot_rgb': 8
     }
     assert args.dataset_file in dataset_to_num_classes
     num_classes = dataset_to_num_classes[args.dataset_file]
