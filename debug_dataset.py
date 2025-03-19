@@ -32,8 +32,6 @@ def get_args_parser():
     parser = argparse.ArgumentParser('Deformable DETR Detector', add_help=False)
     parser.add_argument('--lr', default=2e-4, type=float)
     parser.add_argument('--lr_backbone_names', default=["backbone.0"], type=str, nargs='+')
-    parser.add_argument('--lr_backbone_first_conv', default=['backbone.0.body.conv1.weight'], type=str, nargs='+')
-    parser.add_argument('--lr_backbone_first_conv_multi', default=1, type=float)
     parser.add_argument('--lr_backbone', default=2e-5, type=float)
     parser.add_argument('--lr_linear_proj_names', default=['reference_points', 'sampling_offsets',], type=str, nargs='+')
     parser.add_argument('--lr_linear_proj_mult', default=0.1, type=float)
@@ -144,7 +142,7 @@ def get_args_parser():
                         help='start epoch')
     parser.add_argument('--eval', action='store_true')
     parser.add_argument('--vis', action='store_true')
-    parser.add_argument('--num_workers', default=2, type=int)
+    parser.add_argument('--num_workers', default=1, type=int)
     parser.add_argument('--pretrained', default=None, help='resume from checkpoint')
     parser.add_argument('--cache_mode', default=False, action='store_true', help='whether to cache images on memory')
 
@@ -179,8 +177,6 @@ def get_args_parser():
 
     parser.add_argument('--use_checkpoint', action='store_true', default=False)
     parser.add_argument('--query_denoise', type=float, default=0.)
-
-    parser.add_argument('--input_channels', default=3, type=int)
     return parser
 
 
@@ -200,12 +196,12 @@ def main(args):
     np.random.seed(seed)
     random.seed(seed)
 
-    model, criterion, postprocessors = build_model(args)
-    model.to(device)
+    # model, criterion, postprocessors = build_model(args)
+    # model.to(device)
 
-    model_without_ddp = model
-    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
-    print('number of params:', n_parameters)
+    # model_without_ddp = model
+    # n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    # print('number of params:', n_parameters)
 
     dataset_train = build_dataset(image_set='train', args=args)
 
@@ -224,83 +220,79 @@ def main(args):
                                    collate_fn=collate_fn, num_workers=args.num_workers,
                                    pin_memory=True)
 
-    def match_name_keywords(n, name_keywords):
-        out = False
-        for b in name_keywords:
-            if b in n:
-                out = True
-                break
-        return out
+    # def match_name_keywords(n, name_keywords):
+    #     out = False
+    #     for b in name_keywords:
+    #         if b in n:
+    #             out = True
+    #             break
+    #     return out
 
-    param_dicts = [
-        {
-            "params":
-                [p for n, p in model_without_ddp.named_parameters()
-                 if not match_name_keywords(n, args.lr_backbone_names) and not match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
-            "lr": args.lr,
-        },
-        {
-            "params": [p for n, p in model_without_ddp.named_parameters() if match_name_keywords(n, args.lr_backbone_names) and p.requires_grad and not match_name_keywords(n, args.lr_backbone_first_conv)],
-            "lr": args.lr_backbone,
-        },
-        {
-            "params": [p for n, p in model_without_ddp.named_parameters() if match_name_keywords(n, args.lr_backbone_first_conv) and p.requires_grad],
-            "lr": args.lr_backbone * args.lr_backbone_first_conv_multi,
-        },
-        {
-            "params": [p for n, p in model_without_ddp.named_parameters() if match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
-            "lr": args.lr * args.lr_linear_proj_mult,
-        }
-    ]
-    if args.sgd:
-        optimizer = torch.optim.SGD(param_dicts, lr=args.lr, momentum=0.9,
-                                    weight_decay=args.weight_decay)
-    else:
-        optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
-                                      weight_decay=args.weight_decay)
-    lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
+    # param_dicts = [
+    #     {
+    #         "params":
+    #             [p for n, p in model_without_ddp.named_parameters()
+    #              if not match_name_keywords(n, args.lr_backbone_names) and not match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+    #         "lr": args.lr,
+    #     },
+    #     {
+    #         "params": [p for n, p in model_without_ddp.named_parameters() if match_name_keywords(n, args.lr_backbone_names) and p.requires_grad],
+    #         "lr": args.lr_backbone,
+    #     },
+    #     {
+    #         "params": [p for n, p in model_without_ddp.named_parameters() if match_name_keywords(n, args.lr_linear_proj_names) and p.requires_grad],
+    #         "lr": args.lr * args.lr_linear_proj_mult,
+    #     }
+    # ]
+    # if args.sgd:
+    #     optimizer = torch.optim.SGD(param_dicts, lr=args.lr, momentum=0.9,
+    #                                 weight_decay=args.weight_decay)
+    # else:
+    #     optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
+    #                                   weight_decay=args.weight_decay)
+    # lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
 
-    if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
-        model_without_ddp = model.module
+    # if args.distributed:
+    #     model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu])
+    #     model_without_ddp = model.module
 
-    if args.frozen_weights is not None:
-        checkpoint = torch.load(args.frozen_weights, map_location='cpu')
-        model_without_ddp.detr.load_state_dict(checkpoint['model'])
+    # if args.frozen_weights is not None:
+    #     checkpoint = torch.load(args.frozen_weights, map_location='cpu')
+    #     model_without_ddp.detr.load_state_dict(checkpoint['model'])
 
-    if args.pretrained is not None:
-        model_without_ddp = load_model(model_without_ddp, args.pretrained)
+    # if args.pretrained is not None:
+    #     model_without_ddp = load_model(model_without_ddp, args.pretrained)
 
     output_dir = Path(args.output_dir)
-    if args.resume:
-        if args.resume.startswith('https'):
-            checkpoint = torch.hub.load_state_dict_from_url(
-                args.resume, map_location='cpu', check_hash=True)
-        else:
-            checkpoint = torch.load(args.resume, map_location='cpu')
-        missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
-        unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
-        if len(missing_keys) > 0:
-            print('Missing Keys: {}'.format(missing_keys))
-        if len(unexpected_keys) > 0:
-            print('Unexpected Keys: {}'.format(unexpected_keys))
-        if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
-            import copy
-            p_groups = copy.deepcopy(optimizer.param_groups)
-            optimizer.load_state_dict(checkpoint['optimizer'])
-            for pg, pg_old in zip(optimizer.param_groups, p_groups):
-                pg['lr'] = pg_old['lr']
-                pg['initial_lr'] = pg_old['initial_lr']
-            # print(optimizer.param_groups)
-            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
-            # todo: this is a hack for doing experiment that resume from checkpoint and also modify lr scheduler (e.g., decrease lr in advance).
-            args.override_resumed_lr_drop = True
-            if args.override_resumed_lr_drop:
-                print('Warning: (hack) args.override_resumed_lr_drop is set to True, so args.lr_drop would override lr_drop in resumed lr_scheduler.')
-                lr_scheduler.step_size = args.lr_drop
-                lr_scheduler.base_lrs = list(map(lambda group: group['initial_lr'], optimizer.param_groups))
-            lr_scheduler.step(lr_scheduler.last_epoch)
-            args.start_epoch = checkpoint['epoch'] + 1
+    # if args.resume:
+    #     if args.resume.startswith('https'):
+    #         checkpoint = torch.hub.load_state_dict_from_url(
+    #             args.resume, map_location='cpu', check_hash=True)
+    #     else:
+    #         checkpoint = torch.load(args.resume, map_location='cpu')
+    #     missing_keys, unexpected_keys = model_without_ddp.load_state_dict(checkpoint['model'], strict=False)
+    #     unexpected_keys = [k for k in unexpected_keys if not (k.endswith('total_params') or k.endswith('total_ops'))]
+    #     if len(missing_keys) > 0:
+    #         print('Missing Keys: {}'.format(missing_keys))
+    #     if len(unexpected_keys) > 0:
+    #         print('Unexpected Keys: {}'.format(unexpected_keys))
+    #     if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
+    #         import copy
+    #         p_groups = copy.deepcopy(optimizer.param_groups)
+    #         optimizer.load_state_dict(checkpoint['optimizer'])
+    #         for pg, pg_old in zip(optimizer.param_groups, p_groups):
+    #             pg['lr'] = pg_old['lr']
+    #             pg['initial_lr'] = pg_old['initial_lr']
+    #         # print(optimizer.param_groups)
+    #         lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
+    #         # todo: this is a hack for doing experiment that resume from checkpoint and also modify lr scheduler (e.g., decrease lr in advance).
+    #         args.override_resumed_lr_drop = True
+    #         if args.override_resumed_lr_drop:
+    #             print('Warning: (hack) args.override_resumed_lr_drop is set to True, so args.lr_drop would override lr_drop in resumed lr_scheduler.')
+    #             lr_scheduler.step_size = args.lr_drop
+    #             lr_scheduler.base_lrs = list(map(lambda group: group['initial_lr'], optimizer.param_groups))
+    #         lr_scheduler.step(lr_scheduler.last_epoch)
+    #         args.start_epoch = checkpoint['epoch'] + 1
 
     print("Start training")
     start_time = time.time()
@@ -309,24 +301,33 @@ def main(args):
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             sampler_train.set_epoch(epoch)
-        train_stats = train_one_epoch_mot(
-            model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm)
-        lr_scheduler.step()
-        if args.output_dir:
-            checkpoint_paths = [output_dir / 'checkpoint.pth']
-            # extra checkpoint before LR drop and every 5 epochs
-            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % args.save_period == 0 or (((args.epochs >= 100 and (epoch + 1) > 100) or args.epochs < 100) and (epoch + 1) % 5 == 0):
-                checkpoint_paths.append(output_dir / f'checkpoint{epoch:04}.pth')
-            for checkpoint_path in checkpoint_paths:
-                utils.save_on_master({
-                    'model': model_without_ddp.state_dict(),
-                    'optimizer': optimizer.state_dict(),
-                    'lr_scheduler': lr_scheduler.state_dict(),
-                    'epoch': epoch,
-                    'args': args,
-                }, checkpoint_path)
+            
+        from tqdm import tqdm
+        for i, data_dict in enumerate(data_loader_train):
+            print(f'epoch:{epoch}, it:{i}')
+            if i == 200:
+                break
+            pass
+        # train_stats = train_one_epoch_mot(
+        #     model, criterion, data_loader_train, optimizer, device, epoch, args.clip_max_norm)
+        # lr_scheduler.step()
+        # if args.output_dir:
+        #     checkpoint_paths = [output_dir / 'checkpoint.pth']
+        #     # extra checkpoint before LR drop and every 5 epochs
+        #     if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % args.save_period == 0 or (((args.epochs >= 100 and (epoch + 1) > 100) or args.epochs < 100) and (epoch + 1) % 5 == 0):
+        #         checkpoint_paths.append(output_dir / f'checkpoint{epoch:04}.pth')
+        #     for checkpoint_path in checkpoint_paths:
+        #         utils.save_on_master({
+        #             'model': model_without_ddp.state_dict(),
+        #             'optimizer': optimizer.state_dict(),
+        #             'lr_scheduler': lr_scheduler.state_dict(),
+        #             'epoch': epoch,
+        #             'args': args,
+        #         }, checkpoint_path)
 
         dataset_train.step_epoch()
+        if epoch == args.start_epoch +2:
+            break
     total_time = time.time() - start_time
     total_time_str = str(datetime.timedelta(seconds=int(total_time)))
     print('Training time {}'.format(total_time_str))
