@@ -24,7 +24,7 @@ from main import get_args_parser
 
 from models.structures import Instances
 from torch.utils.data import Dataset, DataLoader
-from hsmot.mmlab.hs_mmrotate import poly2obb
+from hsmot.mmlab.hs_mmrotate import poly2obb, obb2poly
 import math
 import numpy as np
 import random
@@ -65,16 +65,14 @@ class ListImgDataset(Dataset):
         '''
         self.img_height = 900
         self.img_width = 1200
-        self.mean = [66.04/255, 69.87/255, 61.45/255]
-        self.std = [36.46/255, 35.70/255, 34.93/255]
+        self.mean = [0.27358221, 0.28804452, 0.28133921, 0.26906377, 0.28309119, 0.26928305, 0.28372527, 0.27149373]
+        self.std = [0.19756629, 0.17432339, 0.16413284, 0.17581682, 0.18366176, 0.1536845, 0.15964683, 0.16557951]
 
     def load_img_from_file(self, f_path):
-        cur_img = cv2.imread(os.path.join(self.mot_path, f_path))
-        assert cur_img is not None, f_path
-        cur_img = cv2.cvtColor(cur_img, cv2.COLOR_BGR2RGB)
+        cur_img = np.load(os.path.join(self.mot_path, f_path))
         proposals = []
         im_h, im_w = cur_img.shape[:2]
-        det_key = os.path.join(*f_path.split(os.sep)[-2:]).replace('.png','.txt').replace('.jpg','.txt')
+        det_key = os.path.join(*f_path.split(os.sep)[-2:]).replace('.png','.txt').replace('.jpg','.txt').replace('.npy','.txt')
         for line in self.det_db[det_key]:
             proposals.append(torch.as_tensor(list(map(float, line.split()))))
         if not proposals:
@@ -118,7 +116,7 @@ class Detector(object):
         self.vid = vid
         self.seq_num = os.path.basename(vid)
         img_list = os.listdir(os.path.join(self.args.mot_path, vid))
-        img_list = [os.path.join(vid, i) for i in img_list if ('jpg' in i or 'png' in i)]
+        img_list = [os.path.join(vid, i) for i in img_list if ('jpg' in i or 'png' in i or 'npy' in i)]
 
         self.img_list = sorted(img_list)
         self.img_len = len(self.img_list)
@@ -134,26 +132,19 @@ class Detector(object):
         keep &= dt_instances.obj_idxes >= 0
         return dt_instances[keep]
 
-    # @staticmethod
-    # def filter_dt_by_area(dt_instances: Instances, area_threshold: float) -> Instances:
-    #     wh = dt_instances.boxes[:, 2:4] - dt_instances.boxes[:, 0:2]
-    #     areas = wh[:, 0] * wh[:, 1]
-    #     keep = areas > area_threshold
-    #     return dt_instances[keep]
-
     def detect(self, prob_threshold=0.6, area_threshold=100, vis=False):
         total_dts = 0
         total_occlusion_dts = 0
 
         track_instances = None
-        with open(os.path.join(self.args.mot_path, self.args.det_db)) as f:
+        with open(self.args.det_db) as f:
             det_db = json.load(f)
         loader = DataLoader(ListImgDataset(self.args.mot_path, self.img_list, det_db), 1, num_workers=2)
         lines = []
         for i, data in enumerate(tqdm(loader, desc=self.vid)):
             # 这里是获得图像
             cur_img, ori_img, proposals = [d[0] for d in data]
-            cur_img, proposals = cur_img.cuda(), proposals.cuda()#是否要归一化？
+            cur_img, proposals = cur_img.cuda(), proposals.cuda()
 
             # track_instances = None
             if track_instances is not None:
@@ -177,34 +168,41 @@ class Detector(object):
 
             if vis:
                 cur_vis_img_path = os.path.join(self.save_path, 'frame_{}.jpg'.format(i+1))
-                visualize_img_with_bbox(cur_vis_img_path, ori_img, dt_instances.to(torch.device('cpu')))
+                self.visualize_img_with_bbox_clscolor(cur_vis_img_path, ori_img, dt_instances.to(torch.device('cpu')))
             # save_format = '{frame},{id},{x1:.2f},{y1:.2f},{x2:.2f},{y2:.2f},{x1:.2f},{y1:.2f},{x2:.2f},{y2:.2f},{cls}\n'
             for xyxyxyxy, track_id,label in zip(bbox_xyxyxyxy, identities,labels):
                 if track_id < 0 or track_id is None:
                     continue
                 save_line = f'{i+1},{track_id+1},{xyxyxyxy[0]:.2f},{xyxyxyxy[1]:.2f},{xyxyxyxy[2]:.2f},{xyxyxyxy[3]:.2f},{xyxyxyxy[4]:.2f},{xyxyxyxy[5]:.2f},{xyxyxyxy[6]:.2f},{xyxyxyxy[7]:.2f},-1,{label},-1\n'
-                # x1, y1, x2, y2 = xyxy
-                # w, h = x2 - x1, y2 - y1
                 lines.append(save_line)
                 # lines.append(save_format.format(frame=i + 1, id=track_id, x1=x1, y1=y1, w=w, h=h))
         with open(os.path.join(self.predict_path, f'{self.seq_num}.txt'), 'w') as f:
             f.writelines(lines)
         print("totally {} dts {} occlusion dts".format(total_dts, total_occlusion_dts))
 
-def visualize_img_with_bbox(img_path, img, dt_instances: Instances, ref_pts=None, gt_boxes=None):
-    img = img.cpu().numpy()
-    img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
-    if dt_instances.has('scores'):
-        img_show = draw_bboxes(img, np.concatenate([dt_instances.boxes, dt_instances.scores.reshape(-1, 1)], axis=-1), dt_instances.obj_idxes)
-    else:
-        img_show = draw_bboxes(img, dt_instances.boxes, dt_instances.obj_idxes)
-    # if ref_pts is not None:
-        # img_show = draw_points(img_show, ref_pts)
-    if gt_boxes is not None:
-        img_show = draw_bboxes(img_show, gt_boxes, identities=np.ones((len(gt_boxes), )) * -1)
-    cv2.imwrite(img_path, img_show)
 
-def draw_bboxes(ori_img, bbox, identities=None, offset=(0, 0), cvt_color=False):
+    @staticmethod
+    def visualize_img_with_bbox_clscolor(img_path, img, dt_instances: Instances, ref_pts=None, gt_boxes=None, all_ref_pts_aux=None):
+        if img.shape[2] >3:
+            img = img[:,:,:3]
+            img = np.ascontiguousarray(img)
+        else:    
+            img = cv2.cvtColor(img, cv2.COLOR_RGB2BGR)
+
+        if dt_instances.has('scores'):
+            img_show = draw_bboxes(img, np.concatenate([dt_instances.boxes, dt_instances.scores.reshape(-1, 1)], axis=-1), dt_instances.obj_idxes, labels = dt_instances.labels, color='label')
+        else:
+            img_show = draw_bboxes(img, dt_instances.boxes, dt_instances.obj_idxes, labels=dt_instances.labels, color='label')
+        if ref_pts is not None:
+            img_show = draw_points(img_show, ref_pts)#暂不管
+        if gt_boxes is not None:
+            img_show = draw_bboxes(img_show, gt_boxes, identities=np.ones((len(gt_boxes), )) * -1)
+        if all_ref_pts_aux is not None:
+            img_show = draw_ref_pts_aux(img_show, all_ref_pts_aux)#暂不管
+        cv2.imwrite(img_path, img_show)
+
+
+def draw_bboxes(ori_img, bbox, identities=None, offset=(0, 0), cvt_color=False, labels=None, color='id'):
     if cvt_color:
         ori_img = cv2.cvtColor(np.asarray(ori_img), cv2.COLOR_RGB2BGR)
     img = ori_img
@@ -224,11 +222,14 @@ def draw_bboxes(ori_img, bbox, identities=None, offset=(0, 0), cvt_color=False):
             score = None
         # box text and bar
         id = int(identities[i]) if identities is not None else 0
-        color = COLORS_10[id % len(COLORS_10)]
-        label = '{:d}'.format(id)
+        id_label = '{:d}'.format(id)
+        cls_label = int(labels[i])
+        color = COLORS_10[id % len(COLORS_10)] if color=='id' else COLORS_10[cls_label * 5 % len(COLORS_10)]
+
         # t_size = cv2.getTextSize(label, cv2.FONT_HERSHEY_PLAIN, 2 , 2)[0]
-        img = plot_one_box([x1, y1, x2, y2, x3, y3, x4, y4], img, color, label, score=score)
+        img = plot_one_box([x1, y1, x2, y2, x3, y3, x4, y4], img, color, id_label, score=score)
     return img
+
 
 def plot_one_box(x, img, color=None, label=None, score=None, line_thickness=None):
     # Plots one bounding box on image img
@@ -308,7 +309,7 @@ if __name__ == '__main__':
     detr = detr.cuda()
 
     # '''for HSMOT RGB submit''' 
-    sub_dir = 'test/rgb'
+    sub_dir = 'test/npy'
     seq_nums = os.listdir(os.path.join(args.mot_path, sub_dir))
     if 'seqmap' in seq_nums:
         seq_nums.remove('seqmap')
@@ -320,4 +321,4 @@ if __name__ == '__main__':
 
     for vid in vids:
         det = Detector(args, model=detr, vid=vid)
-        det.detect(args.score_threshold, vis=True)
+        det.detect(args.score_threshold, args.vis)

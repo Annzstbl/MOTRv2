@@ -10,7 +10,8 @@ import os.path as osp
 from PIL import Image, ImageDraw
 import copy
 from models.structures import Instances
-from mmrotate.core import eval_rbbox_map, obb2poly_np, poly2obb_np
+from hsmot.mmlab.hs_mmrotate import poly2obb
+
 
 
 from random import choice, randint
