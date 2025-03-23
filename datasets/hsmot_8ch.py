@@ -10,7 +10,7 @@ import os.path as osp
 from PIL import Image, ImageDraw
 import copy
 from models.structures import Instances
-from hsmot.mmlab.hs_mmrotate import poly2obb
+from hsmot.mmlab.hs_mmrotate import poly2obb, poly2obb_np
 
 
 
