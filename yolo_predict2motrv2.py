@@ -11,11 +11,11 @@ import json
 from tqdm import tqdm
 import sys
 
-yolo_predict_train_path = '/data3/litianhao/hsmot/yolo11/predict_trainset_yolov11l_8ch_CocoPretrain_CopyFirstConv_imgsize1280_4gpu'
-yolo_predict_test_path = '/data3/litianhao/hsmot/yolo11/predict_testset_yolov11l_8ch_CocoPretrain_CopyFirstConv_imgsize1280_4gpu'
+# yolo_predict_train_path = '/data3/litianhao/hsmot/yolo11/predict_trainset_yolov11l_8ch_CocoPretrain_CopyFirstConv_imgsize1280_4gpu'
+# yolo_predict_test_path = '/data3/litianhao/hsmot/yolo11/predict_testset_yolov11l_8ch_CocoPretrain_CopyFirstConv_imgsize1280_4gpu'
 
-motrv2_train_json = '/data/users/litianhao/hsmot_code/workdir/motrv2/yolo11_train.json'
-motrv2_test_json = '/data/users/litianhao/hsmot_code/workdir/motrv2/yolo11_test.json'
+# motrv2_train_json = '/data/users/litianhao/hsmot_code/workdir/motrv2/yolo11_train.json'
+# motrv2_test_json = '/data/users/litianhao/hsmot_code/workdir/motrv2/yolo11_test.json'
 
 
 def yolo_predict_to_json(predict_path, json_file):
@@ -53,5 +53,11 @@ if __name__ == "__main__":
     # predict_path = sys.argv[1]
     # json_file = sys.argv[2]
     # yolo_predict_to_json(predict_path, json_file)
-    yolo_predict_to_json(yolo_predict_train_path, motrv2_train_json)
-    yolo_predict_to_json(yolo_predict_test_path, motrv2_test_json)
+    # yolo_predict_to_json(yolo_predict_train_path, motrv2_train_json)
+    # yolo_predict_to_json(yolo_predict_test_path, motrv2_test_json)
+
+
+    yolo_predict_to_json('/data3/litianhao/hsmot/yolo11/197/yolov11l_8ch_CocoPretrain_convhsi_imgsize1280_fullFirstLr10_1gpu2_predict_trainset', '/data3/litianhao/hsmot/motrv2/8ch_yolo11_train_conv3d.json')
+    yolo_predict_to_json('/data3/litianhao/hsmot/yolo11/197/yolov11l_8ch_CocoPretrain_convhsi_imgsize1280_fullFirstLr10_1gpu2_predict', '/data3/litianhao/hsmot/motrv2/8ch_yolo11_test_conv3d.json')
+    yolo_predict_to_json('yolov11l_3ch_CocoPretrain_imgsize1280_1gpu_predict', '/data3/litianhao/hsmot/motrv2/3ch_yolo11_test.json')
+    yolo_predict_to_json('yolov11l_3ch_CocoPretrain_imgsize1280_1gpu_predict_trainset', '/data3/litianhao/hsmot/motrv2/3ch_yolo11_train.json')

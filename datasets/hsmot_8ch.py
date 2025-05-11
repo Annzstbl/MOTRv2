@@ -26,7 +26,7 @@ from hsmot.datasets.pipelines.formatting import MotCollect, MotDefaultFormatBund
 
 
 class DetHSMOTDetection:
-    def __init__(self, args, transform, image_set='train', version='le135'):
+    def __init__(self, args, transform, image_set='train', version='le135', npy2rgb=False):
         self.args = args
         self.transform = transform
         self.num_frames_per_batch = max(args.sampler_lengths)
@@ -37,6 +37,7 @@ class DetHSMOTDetection:
         self.labels_dir = os.path.join(args.mot_path, image_set, "mot")
         self.version = version
         self.yolo_db = args.det_db
+        self.npy2rgb = npy2rgb
         vid_white_list = None
 
         self.labels_full = defaultdict(lambda: defaultdict(list))
@@ -225,6 +226,10 @@ class DetHSMOTDetection:
             gt_instances.append(gt_instances_i)
             proposals_instances.append(proposal_instances_i)
 
+        if self.npy2rgb:
+            images = [img[[1,2,4], :, :] for img in images]
+
+
         return {
             'imgs': images,
             'gt_instances': gt_instances,
@@ -257,9 +262,9 @@ def build(image_set, args):
     assert root.exists(), f'provided MOT path {root} does not exist'
     transform = build_transform(args, image_set)
     if image_set == 'train':
-        dataset = DetHSMOTDetection(args, transform=transform)
+        dataset = DetHSMOTDetection(args, transform=transform, npy2rgb=args.npy2rgb)
     if image_set == 'val':
-        dataset = DetHSMOTDetection(args, transform=transform)
+        dataset = DetHSMOTDetection(args, transform=transform, npy2rgb=args.npy2rgb)
     return dataset
 
 def make_transforms_for_hsmot_rgb(image_set, args=None):

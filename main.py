@@ -32,7 +32,7 @@ def get_args_parser():
     parser = argparse.ArgumentParser('Deformable DETR Detector', add_help=False)
     parser.add_argument('--lr', default=2e-4, type=float)
     parser.add_argument('--lr_backbone_names', default=["backbone.0"], type=str, nargs='+')
-    parser.add_argument('--lr_backbone_first_conv', default=['backbone.0.body.conv1.weight'], type=str, nargs='+')
+    parser.add_argument('--lr_backbone_first_conv', default=[], type=str, nargs='+')
     parser.add_argument('--lr_backbone_first_conv_multi', default=1, type=float)
     parser.add_argument('--lr_backbone', default=2e-5, type=float)
     parser.add_argument('--lr_linear_proj_names', default=['reference_points', 'sampling_offsets',], type=str, nargs='+')
@@ -181,6 +181,7 @@ def get_args_parser():
     parser.add_argument('--query_denoise', type=float, default=0.)
 
     parser.add_argument('--input_channels', default=3, type=int)
+    parser.add_argument('--npy2rgb', action='store_true')
     return parser
 
 
@@ -252,6 +253,15 @@ def main(args):
             "lr": args.lr * args.lr_linear_proj_mult,
         }
     ]
+    first_conv_names = []
+    for n, p in model_without_ddp.named_parameters():
+        if match_name_keywords(n, args.lr_backbone_first_conv) and p.requires_grad:
+            first_conv_names.append(n)
+    if len(first_conv_names) > 0:
+        print('first conv params:', first_conv_names)
+    else:
+        print('first conv params: None')
+
     if args.sgd:
         optimizer = torch.optim.SGD(param_dicts, lr=args.lr, momentum=0.9,
                                     weight_decay=args.weight_decay)

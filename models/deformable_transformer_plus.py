@@ -22,7 +22,8 @@ from models.structures import Boxes, matched_boxlist_iou, pairwise_iou
 
 from util.misc import inverse_sigmoid
 from util.box_ops import box_cxcywh_to_xyxy
-from models.ops.modules import MSDeformAttn
+# from models.ops.modules import MSDeformAttn
+from models.ops.modules import MSDeformAttn_Rotate as MSDeformAttn
 
 
 class DeformableTransformer(nn.Module):
@@ -389,6 +390,7 @@ class DeformableTransformerDecoderLayer(nn.Module):
                                         src_padding_mask, attn_mask)
 
 
+#TODO 检查这里的修改是否正确
 def pos2posemb(pos, num_pos_feats=64, temperature=10000, dst_dim=None):
     if dst_dim:
         num_pos_feats = dst_dim//pos.shape[-1]
@@ -415,6 +417,7 @@ class DeformableTransformerDecoder(nn.Module):
         # hack implementation for iterative bounding box refinement and two-stage Deformable DETR
         self.bbox_embed = None
         self.class_embed = None
+        self.angle_embed = None
 
     def forward(self, tgt, reference_points, src, src_spatial_shapes, src_level_start_index, src_valid_ratios,
                 src_padding_mask=None, mem_bank=None, mem_bank_pad_mask=None, attn_mask=None):
@@ -423,13 +426,9 @@ class DeformableTransformerDecoder(nn.Module):
         intermediate = []
         intermediate_reference_points = []
         for lid, layer in enumerate(self.layers):
-            if reference_points.shape[-1] == 4:
+            if reference_points.shape[-1] == 5:
                 reference_points_input = reference_points[:, :, None] \
-                                         * torch.cat([src_valid_ratios, src_valid_ratios], -1)[:, None]
-            elif reference_points.shape[-1] == 5:# 带一个角度
-                reference_points_input = reference_points[:, :, :4]
-                reference_points_input = reference_points_input[:, :, None] \
-                                         * torch.cat([src_valid_ratios, src_valid_ratios], -1)[:, None]
+                    * torch.cat([src_valid_ratios, src_valid_ratios,torch.ones((*src_valid_ratios.shape[:-1], 1), device=src_valid_ratios.device)], -1)[:, None]
             else:
                 assert reference_points.shape[-1] == 2
                 reference_points_input = reference_points[:, :, None] * src_valid_ratios[:, None]
@@ -441,7 +440,9 @@ class DeformableTransformerDecoder(nn.Module):
             # hack implementation for iterative bounding box refinement
             if self.bbox_embed is not None:
                 tmp = self.bbox_embed[lid](output)
-                if reference_points.shape[-1] == 4 or reference_points.shape[-1]==5:
+                angle = self.angle_embed[lid](output)
+                tmp = torch.cat((tmp, angle), -1)
+                if reference_points.shape[-1] == 5:
                     new_reference_points = tmp + inverse_sigmoid(reference_points)
                     new_reference_points = new_reference_points.sigmoid()
                 else:
