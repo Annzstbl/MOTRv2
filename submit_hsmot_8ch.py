@@ -53,7 +53,7 @@ COLORS_10 = [(144, 238, 144), (178, 34, 34), (221, 160, 221), (0, 255, 0), (0, 1
 
 
 class ListImgDataset(Dataset):
-    def __init__(self, mot_path, img_list, det_db, version='le135') -> None:
+    def __init__(self, mot_path, img_list, det_db, npy2rgb=False, version='le135') -> None:
         super().__init__()
         self.mot_path = mot_path
         self.img_list = img_list
@@ -67,6 +67,7 @@ class ListImgDataset(Dataset):
         self.img_width = 1200
         self.mean = [0.27358221, 0.28804452, 0.28133921, 0.26906377, 0.28309119, 0.26928305, 0.28372527, 0.27149373]
         self.std = [0.19756629, 0.17432339, 0.16413284, 0.17581682, 0.18366176, 0.1536845, 0.15964683, 0.16557951]
+        self.npy2rgb = npy2rgb
 
     def load_img_from_file(self, f_path):
         cur_img = np.load(os.path.join(self.mot_path, f_path))
@@ -90,6 +91,8 @@ class ListImgDataset(Dataset):
         target_w = int(self.seq_w * scale)
         img = cv2.resize(img, (target_w, target_h))
         img = F.normalize(F.to_tensor(img), self.mean, self.std)
+        if self.npy2rgb:
+            img = img[[1,2,4], ...]
         img = img.unsqueeze(0)
 
         proposals = torch.as_tensor(proposals, dtype=torch.float32, device=img.device)
@@ -139,7 +142,7 @@ class Detector(object):
         track_instances = None
         with open(self.args.det_db) as f:
             det_db = json.load(f)
-        loader = DataLoader(ListImgDataset(self.args.mot_path, self.img_list, det_db), 1, num_workers=2)
+        loader = DataLoader(ListImgDataset(self.args.mot_path, self.img_list, det_db, npy2rgb=self.args.npy2rgb), 1, num_workers=2)
         lines = []
         for i, data in enumerate(tqdm(loader, desc=self.vid)):
             # 这里是获得图像

@@ -32,7 +32,7 @@ CUDA_VISIBLE_DEVICES=${GPU} python3 submit_hsmot_8ch.py \
     --query_interaction_layer QIMv2 \
     --query_denoise 0.05 \
     --num_queries 10 \
-    --det_db ../workdir/motrv2/yolo11_test.json \
+    --det_db ../workdir/motrv2/8ch_yolo11_test_conv3d.json \
     --use_checkpoint \
     --mot_path ../data/HSMOT \
     --output_dir ${EXP_DIR} \
