@@ -72,6 +72,7 @@ class ListImgDataset(Dataset):
         self.img_width = 1200
         self.mean = [0.27358221, 0.28804452, 0.28133921, 0.26906377, 0.28309119, 0.26928305, 0.28372527, 0.27149373]
         self.std = [0.19756629, 0.17432339, 0.16413284, 0.17581682, 0.18366176, 0.1536845, 0.15964683, 0.16557951]
+        self.npy2rgb = npy2rgb
 
     def load_img_from_file(self, f_path):
         cur_img = np.load(os.path.join(self.mot_path, f_path))

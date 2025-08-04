@@ -6,7 +6,7 @@ GPU=$2
 PWD=$(cd `dirname $0` && pwd)
 cd $PWD/../
 RESUME=${EXP_DIR}/checkpoint.pth
-CUDA_VISIBLE_DEVICES=${GPU} python3 submit_hsmot_rgb.py \
+CUDA_VISIBLE_DEVICES=${GPU} python3 submit_hsmot_8ch.py \
     --meta_arch motr \
     --dataset_file e2e_hsmot_rgb \
     --epoch 5 \
@@ -26,9 +26,11 @@ CUDA_VISIBLE_DEVICES=${GPU} python3 submit_hsmot_rgb.py \
     --query_interaction_layer QIMv2 \
     --query_denoise 0.05 \
     --num_queries 10 \
-    --det_db /data/users/litianhao/hsmot_code/workdir/motrv2/yolo11_test.json \
+    --det_db /data/users/litianhao/hsmot_code/workdir/motrv2/3ch_yolo11_test.json \
     --use_checkpoint \
     --mot_path /data3/PublicDataset/Custom/HSMOT \
+    --input_channels 3 \
+    --npy2rgb \
     --output_dir ${EXP_DIR}
 
 

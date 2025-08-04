@@ -149,7 +149,7 @@ def build_backbone(args, conv3d=True):
             final_bn = False,
             final_act = False,
             use_bn_3d = False,
-            use_gn_3d = False
+            use_gn_3d = False,
         )
         backbone.body.conv1 = new_conv
     elif args.input_channels != 3:

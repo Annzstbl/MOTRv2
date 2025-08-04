@@ -12,6 +12,7 @@ import copy
 from models.structures import Instances
 from hsmot.mmlab.hs_mmrotate import poly2obb, poly2obb_np
 
+from sklearn.decomposition import PCA
 
 
 from random import choice, randint
@@ -26,7 +27,7 @@ from hsmot.datasets.pipelines.formatting import MotCollect, MotDefaultFormatBund
 
 
 class DetHSMOTDetection:
-    def __init__(self, args, transform, image_set='train', version='le135', npy2rgb=False):
+    def __init__(self, args, transform, image_set='train', version='le135', npy2rgb=False, pca=False, channel_avg=False):
         self.args = args
         self.transform = transform
         self.num_frames_per_batch = max(args.sampler_lengths)
@@ -38,6 +39,8 @@ class DetHSMOTDetection:
         self.version = version
         self.yolo_db = args.det_db
         self.npy2rgb = npy2rgb
+        self.pca = pca
+        self.channel_avg = channel_avg
         vid_white_list = None
 
         self.labels_full = defaultdict(lambda: defaultdict(list))
@@ -227,7 +230,35 @@ class DetHSMOTDetection:
             proposals_instances.append(proposal_instances_i)
 
         if self.npy2rgb:
-            images = [img[[1,2,4], :, :] for img in images]
+            if self.pca:
+                # images: List[Tensor] or List[np.ndarray], shape: [8, H, W]
+                pca_images = []
+                for img in images:
+                    # 转为numpy
+                    if isinstance(img, torch.Tensor):
+                        img_np = img.cpu().numpy()
+                    else:
+                        img_np = img
+                    C, H, W = img_np.shape
+                    # [C, H, W] -> [H*W, C]
+                    flat = img_np.reshape(C, -1).T  # [H*W, 8]
+                    # 做PCA
+                    pca = PCA(n_components=3)
+                    flat_pca = pca.fit_transform(flat)  # [H*W, 3]
+                    img_pca = flat_pca.reshape(3, H, W)
+                    # 转回torch
+                    img_pca = torch.from_numpy(img_pca).type_as(img)
+                    pca_images.append(img_pca)
+                images = pca_images
+            elif self.channel_avg:
+                def _channel_avg(img):
+                    ch1 = img[[0,1], :, :].mean(dim=0, keepdim=True)
+                    ch2 = img[[2,3,4], :, :].mean(dim=0, keepdim=True)
+                    ch3 = img[[5,6,7], :, :].mean(dim=0, keepdim=True)
+                    return torch.cat([ch1, ch2, ch3], dim=0)
+                images = [_channel_avg(img) for img in images]
+            else:
+                images = [img[[1,2,4], :, :] for img in images]
 
 
         return {
@@ -262,9 +293,9 @@ def build(image_set, args):
     assert root.exists(), f'provided MOT path {root} does not exist'
     transform = build_transform(args, image_set)
     if image_set == 'train':
-        dataset = DetHSMOTDetection(args, transform=transform, npy2rgb=args.npy2rgb)
+        dataset = DetHSMOTDetection(args, transform=transform, npy2rgb=args.npy2rgb, pca=args.pca, channel_avg=args.channel_avg)
     if image_set == 'val':
-        dataset = DetHSMOTDetection(args, transform=transform, npy2rgb=args.npy2rgb)
+        dataset = DetHSMOTDetection(args, transform=transform, npy2rgb=args.npy2rgb, pca=args.pca, channel_avg=args.channel_avg)
     return dataset
 
 def make_transforms_for_hsmot_rgb(image_set, args=None):
