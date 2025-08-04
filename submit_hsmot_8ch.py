@@ -30,6 +30,7 @@ import numpy as np
 import random
 from hsmot.datasets.pipelines.channel import rotate_boxes_to_norm_boxes, rotate_norm_boxes_to_boxes
 
+from sklearn.decomposition import PCA
 
 COLORS_10 = [(144, 238, 144), (178, 34, 34), (221, 160, 221), (0, 255, 0), (0, 128, 0), (210, 105, 30), (220, 20, 60),
              (192, 192, 192), (255, 228, 196), (50, 205, 50), (139, 0, 139), (100, 149, 237), (138, 43, 226),
@@ -53,12 +54,16 @@ COLORS_10 = [(144, 238, 144), (178, 34, 34), (221, 160, 221), (0, 255, 0), (0, 1
 
 
 class ListImgDataset(Dataset):
-    def __init__(self, mot_path, img_list, det_db, version='le135') -> None:
+    def __init__(self, mot_path, img_list, det_db, version='le135', npy2rgb=False, pca=False, channel_avg=False, npy_channel=[]) -> None:
         super().__init__()
         self.mot_path = mot_path
         self.img_list = img_list
         self.det_db = det_db
         self.version = version
+        self.npy2rgb = npy2rgb
+        self.pca = pca
+        self.channel_avg = channel_avg
+        self.npy_channel = npy_channel
 
         '''
         common settings
@@ -90,6 +95,27 @@ class ListImgDataset(Dataset):
         target_w = int(self.seq_w * scale)
         img = cv2.resize(img, (target_w, target_h))
         img = F.normalize(F.to_tensor(img), self.mean, self.std)
+
+        if self.npy2rgb:
+            if self.pca:
+                img_np = img.cpu().numpy()
+                C, H, W = img_np.shape
+                flat = img_np.reshape(C, -1).T
+                pca_tool = PCA(n_components=3)
+                flat_pca = pca_tool.fit_transform(flat)
+                img_pca = torch.from_numpy(flat_pca.reshape(3, H, W)).type_as(img)
+                img = img_pca
+            elif self.channel_avg:
+                ch1 = img[[0,1], :, :].mean(dim=0, keepdim=True)
+                ch2 = img[[2,3,4], :, :].mean(dim=0, keepdim=True)
+                ch3 = img[[5,6,7], :, :].mean(dim=0, keepdim=True)
+                img_out = torch.cat([ch1, ch2, ch3], dim=0).type_as(img)
+                img = img_out
+            else:
+                img = img[[1,2,4], :, :]
+
+            img = img.contiguous()
+            
         img = img.unsqueeze(0)
 
         proposals = torch.as_tensor(proposals, dtype=torch.float32, device=img.device)
@@ -139,7 +165,7 @@ class Detector(object):
         track_instances = None
         with open(self.args.det_db) as f:
             det_db = json.load(f)
-        loader = DataLoader(ListImgDataset(self.args.mot_path, self.img_list, det_db), 1, num_workers=2)
+        loader = DataLoader(ListImgDataset(self.args.mot_path, self.img_list, det_db, npy2rgb=self.args.npy2rgb, pca=self.args.pca, channel_avg=self.args.channel_avg), 1, num_workers=2)
         lines = []
         for i, data in enumerate(tqdm(loader, desc=self.vid)):
             # 这里是获得图像
@@ -295,6 +321,7 @@ if __name__ == '__main__':
     parser.add_argument('--score_threshold', default=0.5, type=float)
     parser.add_argument('--update_score_threshold', default=0.5, type=float)
     parser.add_argument('--miss_tolerance', default=20, type=int)
+
     args = parser.parse_args()
     if args.output_dir:
         Path(args.output_dir).mkdir(parents=True, exist_ok=True)

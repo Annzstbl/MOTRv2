@@ -57,7 +57,9 @@ if __name__ == "__main__":
     # yolo_predict_to_json(yolo_predict_test_path, motrv2_test_json)
 
 
-    yolo_predict_to_json('/data3/litianhao/hsmot/yolo11/197/yolov11l_8ch_CocoPretrain_convhsi_imgsize1280_fullFirstLr10_1gpu2_predict_trainset', '/data3/litianhao/hsmot/motrv2/8ch_yolo11_train_conv3d.json')
-    yolo_predict_to_json('/data3/litianhao/hsmot/yolo11/197/yolov11l_8ch_CocoPretrain_convhsi_imgsize1280_fullFirstLr10_1gpu2_predict', '/data3/litianhao/hsmot/motrv2/8ch_yolo11_test_conv3d.json')
-    yolo_predict_to_json('yolov11l_3ch_CocoPretrain_imgsize1280_1gpu_predict', '/data3/litianhao/hsmot/motrv2/3ch_yolo11_test.json')
-    yolo_predict_to_json('yolov11l_3ch_CocoPretrain_imgsize1280_1gpu_predict_trainset', '/data3/litianhao/hsmot/motrv2/3ch_yolo11_train.json')
+    # yolo_predict_to_json('/data3/litianhao/hsmot/yolo11/197/yolov11l_8ch_CocoPretrain_convhsi_imgsize1280_fullFirstLr10_1gpu2_predict_trainset', '/data3/litianhao/hsmot/motrv2/8ch_yolo11_train_conv3d.json')
+    # yolo_predict_to_json('/data3/litianhao/hsmot/yolo11/197/yolov11l_8ch_CocoPretrain_convhsi_imgsize1280_fullFirstLr10_1gpu2_predict', '/data3/litianhao/hsmot/motrv2/8ch_yolo11_test_conv3d.json')
+    # yolo_predict_to_json('/data3/litianhao/hsmot/yolo11/99/yolov11l_3ch_CocoPretrain_imgsize1280_1gpu_predict', '/data3/litianhao/hsmot/motrv2/3ch_yolo11_test.json')
+    # yolo_predict_to_json('/data3/litianhao/hsmot/yolo11/99/yolov11l_3ch_CocoPretrain_imgsize1280_1gpu_predict_trainset', '/data3/litianhao/hsmot/motrv2/3ch_yolo11_train.json')
+    # yolo_predict_to_json('/data3/litianhao/hsmot/yolo11/99/rebuttal/convmsi_dotapretrain/predict_test', '/data3/litianhao/hsmot/motrv2/retbuttal_dota_test.json')
+    yolo_predict_to_json('/data3/litianhao/hsmot/yolo11/99/rebuttal/convmsi_dotapretrain/predict_train', '/data3/litianhao/hsmot/motrv2/retbuttal_dota_train.json')
