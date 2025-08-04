@@ -182,6 +182,8 @@ def get_args_parser():
 
     parser.add_argument('--input_channels', default=3, type=int)
     parser.add_argument('--npy2rgb', action='store_true')
+    parser.add_argument('--pca', action='store_true')
+    parser.add_argument('--channel_avg', action='store_true')
     return parser
 
 
@@ -325,7 +327,7 @@ def main(args):
         if args.output_dir:
             checkpoint_paths = [output_dir / 'checkpoint.pth']
             # extra checkpoint before LR drop and every 5 epochs
-            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % args.save_period == 0 or (((args.epochs >= 100 and (epoch + 1) > 100) or args.epochs < 100) and (epoch + 1) % 5 == 0):
+            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % args.save_period == 0 or (((args.epochs >= 100 and (epoch + 1) > 100) or args.epochs < 100) and (epoch + 1) % 1 == 0):
                 checkpoint_paths.append(output_dir / f'checkpoint{epoch:04}.pth')
             for checkpoint_path in checkpoint_paths:
                 utils.save_on_master({
